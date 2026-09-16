@@ -1,0 +1,963 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Class Timer — Cataratas</title>
+<style>
+  :root {
+    --bg: #0f1220;
+    --panel: #1a1f36;
+    --accent: #ff9900;
+    --accent-2: #4f8cff;
+    --text: #f5f7ff;
+    --muted: #9aa3c4;
+    --danger: #ff5c5c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    background: #0a1a2a;
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    overflow: hidden;
+  }
+
+  /* Pixel-art waterfall background */
+  #bgCanvas {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 0;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    pointer-events: none;
+  }
+  /* subtle darkening so UI text stays readable over the scene */
+  #bgScrim {
+    position: fixed;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    background:
+      radial-gradient(58% 50% at 50% 44%, rgba(8,16,28,0.42) 0%, rgba(8,16,28,0.10) 55%, rgba(8,16,28,0) 78%),
+      linear-gradient(180deg, rgba(8,16,28,0.30) 0%, rgba(8,16,28,0) 22%);
+  }
+  .controls, .stage { position: relative; z-index: 2; }
+
+  /* ---------- Control bar ---------- */
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    align-items: flex-end;
+    padding: 18px 24px;
+    background: rgba(6,12,22,0.55);
+    backdrop-filter: blur(3px);
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+  }
+  .field { display: flex; flex-direction: column; gap: 6px; }
+  .field label {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: var(--muted);
+  }
+  select, input[type="text"], input[type="number"] {
+    background: var(--panel);
+    color: var(--text);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-size: 15px;
+    outline: none;
+  }
+  select:focus, input:focus { border-color: var(--accent-2); }
+  input[type="number"] { width: 110px; }
+
+  .btn {
+    border: none;
+    border-radius: 10px;
+    padding: 11px 18px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    color: #fff;
+    transition: transform .05s ease, opacity .2s ease;
+  }
+  .btn:active { transform: translateY(1px); }
+  .btn-start { background: var(--accent); color: #1a1f36; }
+  .btn-pause { background: var(--accent-2); }
+  .btn-reset { background: transparent; border: 1px solid rgba(255,255,255,0.25); }
+  .btn-full  { background: transparent; border: 1px solid rgba(255,255,255,0.25); }
+
+  .controls-actions { display: flex; gap: 10px; margin-left: auto; }
+
+  /* ---------- Stage ---------- */
+  .stage {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 40px 24px;
+    gap: 18px;
+  }
+  .message-line {
+    font-size: clamp(28px, 5vw, 64px);
+    font-weight: 700;
+    line-height: 1.15;
+    max-width: 1100px;
+    text-shadow: 0 2px 14px rgba(0,0,0,0.6);
+  }
+  .message-line.small {
+    font-size: clamp(22px, 3.4vw, 44px);
+    font-weight: 500;
+    color: #dfe6ff;
+  }
+  .course-input, .other-input {
+    background: transparent;
+    border: none;
+    border-bottom: 3px dashed rgba(255,255,255,0.4);
+    color: var(--accent);
+    text-align: center;
+    font-size: clamp(28px, 5vw, 64px);
+    font-weight: 700;
+    line-height: 1.15;
+    width: 92%;
+    max-width: 1100px;
+    padding: 6px 10px;
+    resize: none;
+    overflow: hidden;
+    font-family: inherit;
+    display: block;
+    margin: 0 auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    text-shadow: 0 2px 14px rgba(0,0,0,0.6);
+  }
+  .course-input:focus, .other-input:focus {
+    outline: none;
+    border-bottom-color: var(--accent);
+  }
+  .course-input::placeholder, .other-input::placeholder {
+    color: rgba(255,255,255,0.45);
+  }
+  .other-input {
+    font-size: clamp(26px, 4.4vw, 56px);
+  }
+
+  .timer {
+    font-size: clamp(90px, 22vw, 320px);
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: .02em;
+    line-height: 1;
+    margin-top: 10px;
+    text-shadow: 0 4px 30px rgba(0,0,0,0.75), 0 0 40px rgba(79,140,255,0.35);
+  }
+  .timer.warning { color: var(--accent); text-shadow: 0 4px 30px rgba(0,0,0,0.75), 0 0 40px rgba(255,153,0,0.45); }
+  .timer.done { color: var(--danger); animation: blink 1s steps(2, start) infinite; }
+  @keyframes blink { 50% { opacity: .25; } }
+
+  .hidden { display: none !important; }
+
+  /* Fullscreen tweaks */
+  :fullscreen .controls { display: none; }
+  :fullscreen .stage { padding-top: 60px; }
+</style>
+</head>
+<body>
+
+  <canvas id="bgCanvas"></canvas>
+  <div id="bgScrim"></div>
+
+  <div class="controls">
+    <div class="field">
+      <label id="lbl-lang">Idioma / Language</label>
+      <select id="langSelect">
+        <option value="pt">Português (Brasil)</option>
+        <option value="en">English</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label id="lbl-mode">Modo / Mode</label>
+      <select id="modeSelect">
+        <option value="welcome">Welcome</option>
+        <option value="coffee">Coffee Break</option>
+        <option value="other">Other</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label id="lbl-minutes">Minutos / Minutes</label>
+      <input type="number" id="minutesInput" min="0" max="180" value="10">
+    </div>
+
+    <div class="controls-actions">
+      <button class="btn btn-start" id="startBtn">Start</button>
+      <button class="btn btn-pause" id="pauseBtn">Pause</button>
+      <button class="btn btn-reset" id="resetBtn">Reset</button>
+      <button class="btn btn-full" id="fullBtn">⛶</button>
+    </div>
+  </div>
+
+  <div class="stage">
+    <!-- Welcome -->
+    <div id="welcomeBlock" class="mode-block">
+      <div class="message-line" id="welcomeLine1">Welcome to the</div>
+      <textarea class="course-input" id="courseInput" rows="1" placeholder="course name"></textarea>
+      <div class="message-line small" id="welcomeLine2">Class starts in</div>
+    </div>
+
+    <!-- Coffee -->
+    <div id="coffeeBlock" class="mode-block hidden">
+      <div class="message-line" id="coffeeLine">Coffee Break, we'll be back in</div>
+    </div>
+
+    <!-- Other -->
+    <div id="otherBlock" class="mode-block hidden">
+      <textarea class="other-input" id="otherInput" rows="1" placeholder="type something about the lab..."></textarea>
+    </div>
+
+    <div class="timer" id="timerDisplay">10:00</div>
+  </div>
+
+<script>
+  // =========================================================
+  //  TIMER LOGIC (preserved from the original project)
+  // =========================================================
+  const T = {
+    pt: {
+      langLabel: "Idioma",
+      modeLabel: "Modo",
+      minutesLabel: "Minutos",
+      start: "Iniciar",
+      pause: "Pausar",
+      resume: "Continuar",
+      reset: "Reiniciar",
+      modes: { welcome: "Boas-vindas", coffee: "Intervalo (Café)", other: "Outro" },
+      welcomeLine1: "Bem-vindo(a) ao",
+      coursePlaceholder: "nome do curso",
+      welcomeLine2: "A aula começa em",
+      coffeeLine: "Intervalo, voltamos em",
+      otherPlaceholder: "digite algo sobre o lab...",
+    },
+    en: {
+      langLabel: "Language",
+      modeLabel: "Mode",
+      minutesLabel: "Minutes",
+      start: "Start",
+      pause: "Pause",
+      resume: "Resume",
+      reset: "Reset",
+      modes: { welcome: "Welcome", coffee: "Coffee Break", other: "Other" },
+      welcomeLine1: "Welcome to the",
+      coursePlaceholder: "course name",
+      welcomeLine2: "Class starts in",
+      coffeeLine: "Coffee Break, we'll be back in",
+      otherPlaceholder: "type something about the lab...",
+    }
+  };
+
+  const langSelect  = document.getElementById("langSelect");
+  const modeSelect  = document.getElementById("modeSelect");
+  const minutesInput= document.getElementById("minutesInput");
+  const startBtn    = document.getElementById("startBtn");
+  const pauseBtn    = document.getElementById("pauseBtn");
+  const resetBtn    = document.getElementById("resetBtn");
+  const fullBtn     = document.getElementById("fullBtn");
+
+  const lblLang    = document.getElementById("lbl-lang");
+  const lblMode    = document.getElementById("lbl-mode");
+  const lblMinutes = document.getElementById("lbl-minutes");
+
+  const welcomeBlock = document.getElementById("welcomeBlock");
+  const coffeeBlock  = document.getElementById("coffeeBlock");
+  const otherBlock   = document.getElementById("otherBlock");
+
+  const welcomeLine1 = document.getElementById("welcomeLine1");
+  const welcomeLine2 = document.getElementById("welcomeLine2");
+  const coffeeLine   = document.getElementById("coffeeLine");
+  const courseInput  = document.getElementById("courseInput");
+  const otherInput   = document.getElementById("otherInput");
+
+  const timerDisplay = document.getElementById("timerDisplay");
+
+  let remaining = 600;
+  let intervalId = null;
+  let running = false;
+
+  function lang() { return langSelect.value; }
+  function t() { return T[lang()]; }
+
+  function applyLanguage() {
+    const tr = t();
+    document.documentElement.lang = lang() === "pt" ? "pt-BR" : "en";
+
+    lblLang.textContent    = tr.langLabel;
+    lblMode.textContent    = tr.modeLabel;
+    lblMinutes.textContent = tr.minutesLabel;
+
+    const currentMode = modeSelect.value;
+    modeSelect.options[0].text = tr.modes.welcome;
+    modeSelect.options[1].text = tr.modes.coffee;
+    modeSelect.options[2].text = tr.modes.other;
+    modeSelect.value = currentMode;
+
+    startBtn.textContent = running ? tr.pause : tr.start;
+    pauseBtn.textContent = tr.pause;
+    resetBtn.textContent = tr.reset;
+
+    welcomeLine1.textContent = tr.welcomeLine1;
+    welcomeLine2.textContent = tr.welcomeLine2;
+    coffeeLine.textContent   = tr.coffeeLine;
+    courseInput.placeholder  = tr.coursePlaceholder;
+    otherInput.placeholder   = tr.otherPlaceholder;
+  }
+
+  function applyMode() {
+    const m = modeSelect.value;
+    welcomeBlock.classList.toggle("hidden", m !== "welcome");
+    coffeeBlock.classList.toggle("hidden", m !== "coffee");
+    otherBlock.classList.toggle("hidden", m !== "other");
+    requestAnimationFrame(() => {
+      if (typeof autoGrow === "function") { autoGrow(courseInput); autoGrow(otherInput); }
+    });
+  }
+
+  function fmt(sec) {
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0");
+  }
+
+  function render() {
+    timerDisplay.textContent = fmt(remaining);
+    timerDisplay.classList.toggle("warning", remaining > 0 && remaining <= 60);
+    timerDisplay.classList.toggle("done", remaining === 0);
+  }
+
+  function tick() {
+    if (remaining > 0) { remaining--; render(); }
+    if (remaining === 0) { stop(); render(); }
+  }
+
+  function start() {
+    if (running) { pause(); return; }
+    if (remaining === 0) resetFromInput();
+    running = true;
+    startBtn.textContent = t().pause;
+    intervalId = setInterval(tick, 1000);
+  }
+
+  function pause() {
+    running = false;
+    startBtn.textContent = t().resume;
+    clearInterval(intervalId);
+  }
+
+  function stop() {
+    running = false;
+    startBtn.textContent = t().start;
+    clearInterval(intervalId);
+  }
+
+  function resetFromInput() {
+    const mins = Math.max(0, parseInt(minutesInput.value, 10) || 0);
+    remaining = mins * 60;
+  }
+
+  function reset() {
+    stop();
+    resetFromInput();
+    render();
+  }
+
+  langSelect.addEventListener("change", applyLanguage);
+  modeSelect.addEventListener("change", applyMode);
+  minutesInput.addEventListener("input", () => { if (!running) reset(); });
+  startBtn.addEventListener("click", start);
+  pauseBtn.addEventListener("click", pause);
+  resetBtn.addEventListener("click", reset);
+  fullBtn.addEventListener("click", () => {
+    if (!document.fullscreenElement) document.documentElement.requestFullscreen();
+    else document.exitFullscreen();
+  });
+
+  function autoGrow(el) {
+    el.style.height = "auto";
+    el.style.height = el.scrollHeight + "px";
+  }
+  [courseInput, otherInput].forEach((el) => {
+    el.addEventListener("input", () => autoGrow(el));
+    autoGrow(el);
+  });
+
+  applyLanguage();
+  applyMode();
+  reset();
+  requestAnimationFrame(() => { autoGrow(courseInput); autoGrow(otherInput); });
+
+  // =========================================================
+  //  ORIGINAL 16-BIT WATERFALL LANDSCAPE (background)
+  //
+  //  Treated as an illustration, built in layers (back -> front):
+  //    1. sky + distant hills + mist haze
+  //    2. river at the top + irregular waterfall crest
+  //    3. the great falling water (organic masses, light/dark, foam)
+  //    4. side banks (rock/earth/bushes/trees), rising base mist,
+  //       tiny barrels with cats, and a foreground wooden lookout
+  //       with a small irregular group of raincoat cats cheering.
+  //
+  //  Everything is drawn procedurally on ONE low-res canvas that is
+  //  scaled up with nearest-neighbour for a crisp 16-bit look.
+  //  No external images / sprites / fonts / sounds.
+  // =========================================================
+  (function waterfallScene() {
+    const canvas = document.getElementById("bgCanvas");
+    const ctx = canvas.getContext("2d");
+    ctx.imageSmoothingEnabled = false;
+
+    const PIXEL = 3;            // virtual pixel size (finer than before => more detail)
+    let VW = 0, VH = 0;         // virtual buffer size
+    let W = 0, H = 0;
+
+    // ---- 16-bit-ish palette ----
+    const C = {
+      sky1: "#3a4f8a", sky2: "#5f7fbf", sky3: "#8fb3e0",
+      hillFar: "#4a6a7a", hillMid: "#3f6f66",
+      haze: "#dfeef7",
+      earth: "#6b4d33", earthDk: "#4e3826", earthLt: "#8a6743",
+      rock: "#7d766a", rockDk: "#544f46", rockLt: "#9d968a",
+      grass1: "#3f7a3c", grass2: "#4f9a48", grass3: "#356b32", grassDk: "#274c26",
+      trunk: "#5a3f28", trunkDk: "#3f2b1a",
+      // water shades top->deep
+      wTop: "#bfe6f2", wLip: "#9ed4ea",
+      w1: "#79c0e0", w2: "#57a3d3", w3: "#3f84c2", w4: "#2f66a6", w5: "#254f86",
+      foam: "#f2fbff", foam2: "#d4eef9", foam3: "#aad8ee",
+      pool: "#5aa9d6",
+      wood: "#a9703e", woodDk: "#7c4d26", woodLt: "#c98f57", hoop: "#4a3620",
+      yellow: "#ffd23f", yellowDk: "#d99f1c", yellowLt: "#ffe27a",
+      deck: "#8a5f39", deckDk: "#5f3f22", deckLt: "#a97a4a",
+    };
+
+    function hex(h){h=h.replace("#","");return [parseInt(h.slice(0,2),16),parseInt(h.slice(2,4),16),parseInt(h.slice(4,6),16)];}
+    function mix(c1,c2,t){const a=hex(c1),c=hex(c2);return `rgb(${Math.round(a[0]+(c[0]-a[0])*t)},${Math.round(a[1]+(c[1]-a[1])*t)},${Math.round(a[2]+(c[2]-a[2])*t)})`;}
+    function rnd(a,b){return a+Math.random()*(b-a);}
+    function pick(arr){return arr[(Math.random()*arr.length)|0];}
+    // deterministic pseudo-noise so the static scene is stable per build
+    function n1(x){ x=(x<<13)^x; return 1-((x*(x*x*15731+789221)+1376312589)&0x7fffffff)/1073741824; }
+    function px(x,y,w,h,color){ ctx.fillStyle=color; ctx.fillRect(x|0,y|0,Math.max(1,w|0),Math.max(1,h|0)); }
+
+    // ---------- geometry that depends on size ----------
+    // The waterfall is described by irregular left/right edges as a function
+    // of vertical position, so it is NOT a plain rectangle.
+    let crestY=0, poolY=0;         // vertical extents of the falling water
+    let edgeSeed=1234;
+    // returns {l, r} x-limits of the falling water at a given y (virtual px)
+    function waterEdges(y){
+      const tt = (y - crestY) / Math.max(1,(poolY - crestY)); // 0 at crest, 1 at pool
+      const spread = 0.30 + tt*0.16;                 // widens as it falls
+      const cx = VW*0.52;
+      // organic wobble on each side using layered noise
+      const wob = (Math.sin(y*0.05)+Math.sin(y*0.13+edgeSeed))*VW*0.012;
+      const half = VW*spread*0.5;
+      return { l: Math.floor(cx - half + wob*0.6), r: Math.ceil(cx + half + wob) };
+    }
+
+    let deckX0=0, deckX1=0, deckY=0; // foreground lookout box (a bottom corner)
+    function layoutScene(){
+      crestY = Math.floor(VH*0.20);
+      poolY  = Math.floor(VH*0.80);
+      edgeSeed = rnd(0,10);
+      // lookout in the bottom-LEFT corner, foreground
+      const dw = Math.floor(VW*0.30);
+      deckX0 = Math.floor(VW*0.03);
+      deckX1 = deckX0 + dw;
+      deckY  = Math.floor(VH*0.80);
+      makeBarrels(true);
+      makeTourists();
+    }
+
+    // ================= STATIC BACKGROUND BUFFER =================
+    // sky, distant hills, banks, rocks, trees, crest of the falls.
+    let bgBuf=null;
+    function buildStatic(){
+      bgBuf=document.createElement("canvas");
+      bgBuf.width=VW; bgBuf.height=VH;
+      const g=bgBuf.getContext("2d");
+      g.imageSmoothingEnabled=false;
+      const P=(x,y,w,h,c)=>{g.fillStyle=c;g.fillRect(x|0,y|0,Math.max(1,w|0),Math.max(1,h|0));};
+
+      // --- sky: smooth vertical steps ---
+      const skyH=Math.floor(VH*0.55), steps=22;
+      for(let i=0;i<steps;i++){
+        const y0=Math.floor(i/steps*skyH), y1=Math.floor((i+1)/steps*skyH);
+        const tt=i/(steps-1);
+        g.fillStyle = tt<0.5 ? mix(C.sky1,C.sky2,tt*2) : mix(C.sky2,C.sky3,(tt-0.5)*2);
+        g.fillRect(0,y0,VW,y1-y0);
+      }
+      // a few soft clouds (stacked light bars)
+      for(let k=0;k<5;k++){
+        const cx=(n1(k*7+1)*0.5+0.5)*VW, cy=rnd(VH*0.05,VH*0.30), cw=rnd(VW*0.08,VW*0.18);
+        for(let r=0;r<3;r++){ g.fillStyle="rgba(255,255,255,"+(0.12-r*0.03)+")"; g.fillRect(cx-cw/2+r*2, cy+r*2, cw-r*4, 2); }
+      }
+
+      // --- distant hills (two layered ridges) ---
+      const ridge=(baseY,amp,color,step)=>{
+        g.fillStyle=color;
+        for(let x=0;x<VW;x+=step){
+          const h=baseY + Math.sin(x*0.02)*amp + n1(x)*amp*0.5;
+          g.fillRect(x, h, step, VH-h);
+        }
+      };
+      ridge(Math.floor(VH*0.34), 8, C.hillFar, 3);
+      ridge(Math.floor(VH*0.42), 10, C.hillMid, 3);
+
+      // --- the river feeding the crest (top pool that spills over) ---
+      const {l:cl, r:cr}=waterEdges(crestY);
+      // river widens above the crest
+      for(let y=Math.floor(VH*0.30); y<crestY; y++){
+        const tt=(y-VH*0.30)/(crestY-VH*0.30);
+        const l=Math.floor(mix2(cl-VW*0.12, cl, tt));
+        const r=Math.floor(mix2(cr+VW*0.12, cr, tt));
+        g.fillStyle = mix(C.w2, C.wTop, tt);
+        g.fillRect(l, y, r-l, 1);
+      }
+      // irregular crest lip
+      for(let x=cl;x<cr;x++){
+        const lip = crestY + Math.floor((Math.sin(x*0.3)+n1(x))*1.5);
+        P(x, lip-1, 1, 2, C.wLip);
+        P(x, lip+1, 1, 1, C.wTop);
+      }
+
+      // --- side banks: irregular rock/earth masses w/ bushes + trees ---
+      buildBank(g, P, -1);   // left bank
+      buildBank(g, P, +1);   // right bank
+
+      // scattered rocks poking out inside the falls (parallax detail)
+      for(let i=0;i<10;i++){
+        const y=rnd(crestY+VH*0.06, poolY-VH*0.05);
+        const {l,r}=waterEdges(y);
+        const x=rnd(l+4, r-4);
+        drawRock(P, x, y, rnd(2.5,5.5));
+      }
+    }
+    function mix2(a,b,t){return a+(b-a)*t;}
+
+    function buildBank(g,P,dir){
+      // dir -1 = left edge grows from x=0; +1 = right edge grows from x=VW
+      for(let y=Math.floor(VH*0.12); y<VH; y++){
+        const {l,r}=waterEdges(Math.max(crestY,Math.min(poolY,y)));
+        // width of land from screen edge to the water edge, with noise
+        let landEdge = dir<0 ? l : r;
+        const jag = (Math.sin(y*0.09)+n1(y*2+dir*99))*VW*0.03;
+        landEdge += dir<0 ? -Math.abs(jag) : Math.abs(jag);
+        const x0 = dir<0 ? 0 : landEdge;
+        const x1 = dir<0 ? landEdge : VW;
+        // base earth
+        g.fillStyle = C.earth; g.fillRect(x0, y, x1-x0, 1);
+        // rocky lower half tint
+        if(y>VH*0.5){ g.fillStyle = mix(C.earth,C.rockDk, (y-VH*0.5)/(VH*0.5)); g.fillRect(x0,y,x1-x0,1); }
+        // lit rim near the water
+        g.fillStyle = C.earthLt;
+        g.fillRect(dir<0 ? landEdge-2 : landEdge, y, 2, 1);
+      }
+      // grass + bushes along the top rim
+      const rimY0=Math.floor(VH*0.12), rimY1=Math.floor(VH*0.55);
+      for(let y=rimY0;y<rimY1;y+=2){
+        const {l,r}=waterEdges(Math.max(crestY,y));
+        const edge = dir<0 ? l : r;
+        const gx = dir<0 ? edge-rnd(2,10) : edge+rnd(0,8);
+        if(Math.random()<0.7) bush(P, gx, y, pick([C.grass1,C.grass2,C.grass3]));
+      }
+      // a couple of little pine-ish trees on the upper bank
+      for(let k=0;k<3;k++){
+        const y=rnd(VH*0.16, VH*0.40);
+        const {l,r}=waterEdges(Math.max(crestY,y));
+        const tx = dir<0 ? l-rnd(6,16) : r+rnd(6,16);
+        tree(P, tx, y);
+      }
+    }
+    function bush(P,x,y,c){
+      P(x,y,3,2,c); P(x-1,y+1,2,2,c); P(x+2,y+1,2,2,mix(c,C.grassDk,0.4));
+      P(x,y-1,2,1,mix(c,"#ffffff",0.2));
+    }
+    function tree(P,x,y){
+      P(x, y, 2, 6, C.trunk); P(x, y, 1, 6, C.trunkDk);
+      for(let i=0;i<4;i++){ const w=8-i*1.6; P(x-w/2+1, y-4-i*3, w, 3, i%2?C.grass2:C.grass3); }
+      P(x-1, y-4, 5, 1, mix(C.grass2,"#ffffff",0.25));
+    }
+    function drawRock(P,x,y,r){
+      P(x-r, y-r*0.5, r*2, r, C.rockDk);
+      P(x-r+1, y-r*0.5, r*2-2, r*0.6, C.rock);
+      P(x-r+1, y-r*0.5, r, 1, C.rockLt);
+    }
+
+    // ================= ANIMATED WATER =================
+    // Falling water = many short vertical "ribbons" whose brightness is a
+    // function of noise + time, plus fast foam particles. Not uniform lines.
+    let ribbons=[];      // per-column falling texture offsets
+    let foam=[];         // foam particles (some in front, some behind)
+    let mist=[];         // rising mist puffs at the base
+    function initWater(){
+      ribbons=[];
+      foam=[];
+      mist=[];
+      for(let i=0;i<160;i++){
+        foam.push({ t: Math.random(), spd: rnd(0.35,0.9), x01: Math.random(),
+                    len: rnd(2,5), front: Math.random()<0.45, wob: rnd(0,6.28) });
+      }
+      for(let i=0;i<26;i++){
+        mist.push({ x: rnd(VW*0.30,VW*0.72), y: rnd(poolY-6, poolY+10),
+                    r: rnd(4,10), t: Math.random(), spd: rnd(0.15,0.4) });
+      }
+    }
+
+    function drawWater(tsec){
+      // vertical extent
+      for(let y=crestY; y<poolY; y++){
+        const {l,r}=waterEdges(y);
+        const depth=(y-crestY)/(poolY-crestY); // 0..1
+        // base gradient top->deep
+        let base = depth<0.25 ? mix(C.wTop,C.w1,depth/0.25)
+                 : depth<0.5  ? mix(C.w1,C.w2,(depth-0.25)/0.25)
+                 : depth<0.75 ? mix(C.w2,C.w3,(depth-0.5)/0.25)
+                 :              mix(C.w3,C.w4,(depth-0.75)/0.25);
+        ctx.fillStyle=base;
+        ctx.fillRect(l, y, r-l, 1);
+      }
+      // flowing ribbons: brightness bands that scroll downward, with organic
+      // horizontal variation so there are no perfectly uniform vertical lines.
+      const scroll = tsec*46;
+      for(let y=crestY; y<poolY; y+=2){
+        const {l,r}=waterEdges(y);
+        for(let x=l; x<r; x+=1){
+          // layered noise field over x with a downward scroll over y
+          const v = Math.sin((x*0.7) + Math.sin(x*0.13)*2 + (y+scroll)*0.25)
+                  + Math.sin((x*0.31) - (y+scroll)*0.16 + n1(x)*3);
+          if(v>1.35){ ctx.fillStyle=C.foam2; ctx.fillRect(x,y,1,2); }
+          else if(v>0.8){ ctx.fillStyle=C.w1; ctx.fillRect(x,y,1,1); }
+          else if(v<-1.3){ ctx.fillStyle=C.w5; ctx.fillRect(x,y,1,2); }
+        }
+      }
+      // bright crest spill
+      const {l:cl,r:cr}=waterEdges(crestY);
+      px(cl, crestY, cr-cl, 2, C.wLip);
+
+      // fast foam particles (behind barrels)
+      drawFoamLayer(false);
+    }
+
+    function drawFoamLayer(front){
+      for(const f of foam){
+        if(f.front!==front) continue;
+        const y = crestY + f.t*(poolY-crestY);
+        const {l,r}=waterEdges(y);
+        const x = l + f.x01*(r-l) + Math.sin(f.wob)*2;
+        ctx.fillStyle = f.front ? C.foam : C.foam2;
+        ctx.fillRect(x|0, y|0, 2, f.len|0);
+      }
+    }
+    function updateFoam(dt){
+      for(const f of foam){
+        f.t += f.spd*dt*0.5;
+        f.wob += dt*4;
+        if(f.t>1){ f.t=0; f.x01=Math.random(); }
+      }
+    }
+
+    function drawPoolAndMist(tsec, dt){
+      // churning foam pool at the base of the falls
+      const {l,r}=waterEdges(poolY);
+      const pw = (r-l)+VW*0.10, plx = l-VW*0.05;
+      for(let i=0;i<pw;i+=2){
+        const yy = poolY + Math.floor(Math.sin(i*0.3 + tsec*3)*2) + (i%6===0?1:0);
+        px(plx+i, yy, 2, 3, (i%3? C.foam : C.foam2));
+        px(plx+i, yy+3, 2, 2, C.pool);
+      }
+      // rising mist puffs (semi-transparent), partly hides falling barrels near base
+      for(const m of mist){
+        m.y -= m.spd; m.t += dt*0.3;
+        if(m.y < poolY-16){ m.y = poolY+rnd(2,10); m.x=rnd(l,r); }
+        ctx.fillStyle = "rgba(240,250,255,0.10)";
+        ctx.fillRect((m.x-m.r)|0, m.y|0, (m.r*2)|0, 3);
+        ctx.fillStyle = "rgba(240,250,255,0.06)";
+        ctx.fillRect((m.x-m.r*1.4)|0, (m.y+2)|0, (m.r*2.8)|0, 3);
+      }
+    }
+
+    // ================= BARRELS WITH CATS (tiny) =================
+    // Size ~40-45% of the old version. Only head + ears (+ maybe paws) show,
+    // and the barrel is proportionally bigger than the head.
+    const catStyles = [
+      { name:"orange",  fur:"#f0913b", fur2:"#d4741f", inner:"#ffd9a8" },
+      { name:"gray",    fur:"#9aa3ad", fur2:"#727b85", inner:"#d7dde2" },
+      { name:"white",   fur:"#f2f2f2", fur2:"#cfd4d8", inner:"#ffffff" },
+      { name:"black",   fur:"#3a3a44", fur2:"#25252c", inner:"#6a6a76" },
+      { name:"siamese", fur:"#e9ddc6", fur2:"#8a6a44", inner:"#fff6e6" },
+      { name:"calico",  fur:"#f0913b", fur2:"#3a3a44", inner:"#ffffff" }, // frajola
+    ];
+    const catMoods = ["scared","excited","desperate","calm","doomed"];
+
+    let barrels=[];
+    const MAX_BARRELS=8;
+    function makeBarrel(){
+      // spawn in the river ABOVE the crest, drift toward the lip, then plunge
+      const enterX = rnd(VW*0.38, VW*0.64);
+      return {
+        phase:"river",                 // river -> tip -> fall
+        x: enterX,
+        y: rnd(VH*0.08, crestY-4),
+        vy: rnd(0.10,0.22),            // slow drift in the river
+        fallVy: rnd(0.55,1.05),        // plunge speed
+        driftX: rnd(-0.05,0.05),
+        s: rnd(4.2, 6.2),              // ~40-45% of the previous 9-13 range
+        swayAmp: rnd(1,3.2), swayFreq: rnd(0.7,1.7), swayPhase: rnd(0,6.28),
+        rot: 0, rotSpd: rnd(-1.2,1.2),
+        style: pick(catStyles), mood: pick(catMoods),
+        moodPhase: rnd(0,6.28),
+        submerge: Math.random()<0.4,
+      };
+    }
+    function makeBarrels(reset){
+      if(reset) barrels=[];
+      while(barrels.length<MAX_BARRELS){ const b=makeBarrel(); b.y=rnd(-VH*0.1, poolY*0.7); barrels.push(b); }
+    }
+
+    function drawBarrelCat(b, tsec){
+      const s=b.s, x=b.x, y=b.y;
+      ctx.save();
+      ctx.translate(x, y);
+      if(b.phase!=="river") ctx.rotate(Math.sin(tsec*b.swayFreq+b.swayPhase)*0.12 + b.rot);
+
+      // barrel body (proportionally bigger than the head)
+      const bw=s*2.0, bh=s*2.2, bx=-bw/2, by=-s*0.2;
+      // rounded-ish barrel: body + slightly darker caps
+      P2(bx, by, bw, bh, C.wood);
+      P2(bx, by, bw, 1, C.woodLt);
+      P2(bx, by+bh-1, bw, 1, C.woodDk);
+      P2(bx, by, 1, bh, C.woodDk);
+      P2(bx+bw-1, by, 1, bh, C.woodDk);
+      // staves
+      P2(bx+bw*0.34, by, 1, bh, mix(C.wood,C.woodDk,0.5));
+      P2(bx+bw*0.66, by, 1, bh, mix(C.wood,C.woodDk,0.5));
+      P2(bx+bw*0.5, by, 1, bh, C.woodLt);
+      // hoops
+      P2(bx, by+1, bw, 1, C.hoop);
+      P2(bx, by+bh-2, bw, 1, C.hoop);
+
+      // cat head just above the rim: head + two clear ears
+      const hr=s*0.72, hx=0, hy=by-hr*0.9;
+      // ears (triangated with two stacked pixels)
+      P2(hx-hr*0.9, hy-hr*0.7, 2, 2, b.style.fur);
+      P2(hx-hr*0.9, hy-hr*1.1, 1, 2, b.style.fur2);
+      P2(hx+hr*0.7, hy-hr*0.7, 2, 2, b.style.fur);
+      P2(hx+hr*0.8, hy-hr*1.1, 1, 2, b.style.fur2);
+      // head
+      P2(hx-hr, hy-hr, hr*2, hr*1.7, b.style.fur);
+      // pattern variety
+      if(b.style.name==="siamese") P2(hx-hr, hy-hr, hr*2, 1, b.style.fur2);
+      if(b.style.name==="calico")  P2(hx-hr, hy-hr, hr, hr, b.style.fur2);
+      if(b.style.name==="gray")    { P2(hx-hr, hy-hr, 1, hr*1.7, b.style.fur2); P2(hx+hr-1, hy-hr, 1, hr*1.7, b.style.fur2); }
+      // muzzle
+      P2(hx-hr*0.5, hy+hr*0.2, hr, hr*0.6, b.style.inner);
+      // eyes by mood
+      const ey=hy-0.2;
+      if(b.mood==="scared"||b.mood==="desperate"){ P2(hx-hr*0.55,ey,1,2,"#111"); P2(hx+hr*0.4,ey,1,2,"#111"); }
+      else if(b.mood==="doomed"){ P2(hx-hr*0.55,ey+0.5,1,1,"#111"); P2(hx+hr*0.4,ey+0.5,1,1,"#111"); }
+      else { P2(hx-hr*0.55,ey,1,1,"#111"); P2(hx+hr*0.4,ey,1,1,"#111"); }
+
+      // maybe two little paws on the rim (excited/desperate lift them)
+      let lift=0;
+      if(b.mood==="excited") lift = 1+Math.max(0,Math.sin(tsec*8+b.moodPhase))*2;
+      if(b.mood==="desperate") lift = 1+Math.abs(Math.sin(tsec*11+b.moodPhase))*2;
+      P2(hx-hr*0.8, by-1-lift, 1, 1+lift, b.style.fur);
+      P2(hx+hr*0.7, by-1-lift, 1, 1+lift, b.style.fur);
+
+      ctx.restore();
+
+      function P2(px_,py_,w_,h_,c){ ctx.fillStyle=c; ctx.fillRect(px_|0,py_|0,Math.max(1,w_|0),Math.max(1,h_|0)); }
+    }
+
+    function updateBarrel(b, dt, tsec){
+      const step=dt*60;
+      if(b.phase==="river"){
+        b.y += b.vy*step;
+        b.x += b.driftX*step + Math.sin(tsec*0.6+b.swayPhase)*0.15;
+        if(b.y >= crestY-4){ b.phase="tip"; b.tipT=0; }
+      } else if(b.phase==="tip"){
+        // brief tilt at the lip before plunging
+        b.tipT += dt;
+        b.rot += b.rotSpd*dt*0.4;
+        b.y += 0.15*step;
+        if(b.tipT>0.5){ b.phase="fall"; }
+      } else { // fall
+        b.y += b.fallVy*step;
+        b.rot += b.rotSpd*dt;
+        b.x += Math.sin(tsec*b.swayFreq+b.swayPhase)*0.3;
+      }
+      if(b.y > poolY+12) Object.assign(b, makeBarrel());
+    }
+
+    // ================= FOREGROUND: LOOKOUT + TOURIST CATS =================
+    let tourists=[];
+    function makeTourists(){
+      tourists=[];
+      const n = 4 + (Math.random()<0.5?1:2);   // 4..6
+      const poses=["cheer","wave","point","watch","surprise"];
+      const furs=["#f0913b","#9aa3ad","#f2f2f2","#3a3a44","#e9ddc6"];
+      const usableW = (deckX1-deckX0)-8;
+      for(let i=0;i<n;i++){
+        tourists.push({
+          // irregular clustering: jitter around evenly spaced slots
+          x: deckX0 + 6 + (i+0.5)/n*usableW + rnd(-4,4),
+          yJit: rnd(-2,2),
+          pose: poses[i%poses.length===0 && i>0 ? (i%poses.length) : (i%poses.length)],
+          fur: pick(furs),
+          coat: pick([C.yellow, mix(C.yellow,C.yellowDk,0.15)]),
+          phase: rnd(0,6.28), spd: rnd(4,8),
+          flip: Math.random()<0.5?1:-1,
+        });
+        // guarantee variety in first few
+        if(i<poses.length) tourists[i].pose=poses[i];
+      }
+    }
+
+    function drawLookout(){
+      // wooden platform anchored to the bottom-left corner, in foreground
+      const y=deckY, x0=deckX0, x1=deckX1;
+      // support posts going down
+      px(x0+2, y, 2, VH-y, C.deckDk);
+      px(x1-4, y, 2, VH-y, C.deckDk);
+      px((x0+x1)/2, y+4, 2, VH-y, C.deckDk);
+      // deck slab
+      px(x0, y, x1-x0, 4, C.deck);
+      px(x0, y, x1-x0, 1, C.deckLt);
+      px(x0, y+3, x1-x0, 1, C.deckDk);
+      for(let x=x0;x<x1;x+=6) px(x, y, 1, 4, C.deckDk); // planks
+      // guard rail
+      px(x0, y-6, x1-x0, 1, C.woodLt);
+      px(x0, y-6, x1-x0+0, 1, C.woodLt);
+      for(let x=x0+2;x<x1;x+=8) px(x, y-6, 1, 6, C.woodDk);
+      px(x0, y-2, x1-x0, 1, C.wood);
+    }
+
+    function drawTourist(tt, tsec){
+      const s=7;                    // bigger + more detailed than barrel cats
+      const x=tt.x, base=deckY-6+tt.yJit;   // stand on the rail line
+      const bob=Math.sin(tsec*tt.spd*0.35+tt.phase); // gentle idle bob
+      const y=base - (bob>0?1:0);
+      const cheer=Math.sin(tsec*tt.spd+tt.phase);
+
+      // --- yellow poncho over the BODY only (leaves head fully visible) ---
+      const bodyY=y-s*0.9, bodyW=s*1.2, bodyH=s*1.1;
+      px(x-bodyW/2, bodyY, bodyW, bodyH, tt.coat);
+      px(x-bodyW/2, bodyY, bodyW, 1, C.yellowLt);          // highlight
+      px(x-bodyW/2, bodyY+bodyH-1, bodyW, 1, C.yellowDk);  // shade hem
+      px(x-bodyW/2, bodyY, 1, bodyH, C.yellowDk);
+      // little pointed hood collar around the neck (does NOT cover the face)
+      px(x-bodyW/2-1, bodyY-1, bodyW+2, 2, tt.coat);
+      px(x-1, bodyY-2, 2, 1, C.yellowLt);
+
+      // --- clearly a CAT head above the poncho: face + eyes + 2 ears ---
+      const hr=s*0.7, hx=x, hy=bodyY-hr*1.3;
+      // ears
+      px(hx-hr*0.85, hy-hr*0.6, 2, 2, tt.fur);
+      px(hx-hr*0.9,  hy-hr*1.0, 1, 2, mix(tt.fur,"#000",0.25));
+      px(hx+hr*0.6,  hy-hr*0.6, 2, 2, tt.fur);
+      px(hx+hr*0.85, hy-hr*1.0, 1, 2, mix(tt.fur,"#000",0.25));
+      // head
+      px(hx-hr, hy-hr, hr*2, hr*1.8, tt.fur);
+      px(hx-hr, hy-hr, hr*2, 1, mix(tt.fur,"#fff",0.2));
+      // muzzle
+      px(hx-hr*0.5, hy+hr*0.2, hr, hr*0.6, mix(tt.fur,"#fff",0.35));
+      // eyes (look up toward the falls)
+      px(hx-hr*0.5, hy-0.2, 1, 2, "#111");
+      px(hx+hr*0.35, hy-0.2, 1, 2, "#111");
+      // tiny nose + smile
+      px(hx-0.5, hy+hr*0.35, 1, 1, "#7a3b3b");
+
+      // --- pose-driven paws (small idle animation) ---
+      const up = cheer>0 ? 2 : 1;
+      const pawY = bodyY+1;
+      if(tt.pose==="cheer" || tt.pose==="surprise"){
+        // both paws raised high, waving
+        px(x-bodyW/2-1, pawY-up-2, 1, 3+up, tt.coat);
+        px(x+bodyW/2,   pawY-up-2, 1, 3+up, tt.coat);
+        px(x-bodyW/2-1, pawY-up-3, 1, 1, tt.fur);
+        px(x+bodyW/2,   pawY-up-3, 1, 1, tt.fur);
+      } else if(tt.pose==="wave"){
+        const w=cheer*2;
+        px(x+bodyW/2, pawY-2-w, 1, 3, tt.coat);
+        px(x+bodyW/2, pawY-3-w, 1, 1, tt.fur);
+        px(x-bodyW/2-1, pawY, 1, 3, tt.coat);
+      } else if(tt.pose==="point"){
+        // one arm pointing up toward the waterfall (to the right/up)
+        px(x+bodyW/2, pawY-2-up, 2, 1, tt.coat);
+        px(x+bodyW/2+1, pawY-3-up, 1, 2, tt.coat);
+        px(x+bodyW/2+1, pawY-4-up, 1, 1, tt.fur);
+        px(x-bodyW/2-1, pawY, 1, 3, tt.coat);
+      } else { // watch: paws resting on the rail
+        px(x-bodyW/2-1, pawY+1, 1, 2, tt.coat);
+        px(x+bodyW/2, pawY+1, 1, 2, tt.coat);
+      }
+    }
+
+    // ================= MAIN LOOP =================
+    let last=performance.now(), tsec=0;
+    function frame(now){
+      const dt=Math.min(0.05,(now-last)/1000); last=now; tsec+=dt;
+
+      // 1) static landscape (sky, hills, banks, crest)
+      ctx.drawImage(bgBuf,0,0);
+      // 2) the great falling water + foam behind
+      drawWater(tsec);
+
+      // 3) barrels (updated + drawn), with near-base mist partially hiding them
+      for(const b of barrels){
+        updateBarrel(b, dt, tsec);
+        // submerge illusion: skip a few frames inside the misty pool band
+        let hidden=false;
+        if(b.submerge && b.y>poolY-14 && b.y<poolY+6) hidden=(Math.floor(b.y)%7)<3;
+        if(!hidden) drawBarrelCat(b, tsec);
+      }
+
+      // 4) foam in FRONT (depth) + churning pool + rising mist
+      drawFoamLayer(true);
+      updateFoam(dt);
+      drawPoolAndMist(tsec, dt);
+
+      // 5) foreground lookout + cheering tourist cats
+      drawLookout();
+      for(const tt of tourists) drawTourist(tt, tsec);
+
+      requestAnimationFrame(frame);
+    }
+
+    function resize(){
+      W=window.innerWidth; H=window.innerHeight;
+      canvas.width=Math.ceil(W/PIXEL); canvas.height=Math.ceil(H/PIXEL);
+      canvas.style.width=W+"px"; canvas.style.height=H+"px";
+      VW=canvas.width; VH=canvas.height;
+      ctx.imageSmoothingEnabled=false;
+      layoutScene();
+      buildStatic();
+      initWater();
+    }
+
+    window.addEventListener("resize", resize);
+    resize();
+    requestAnimationFrame(frame);
+  })();
+</script>
+</body>
+</html>
